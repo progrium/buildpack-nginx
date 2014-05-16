@@ -1,8 +1,15 @@
 #!/usr/bin/env bash
 set -e
 
-apt-get update
-apt-get -y install nginx
+CACHEDIR=$2
+NGINXFILE=nginx_1.2.1-2.2ubuntu0.2_all.deb
+
+if [[ ! -f "$CACHEDIR/$NGINXFILE" ]]; then
+  apt-get download nginx
+  mv $NGINXFILE $CACHEDIR
+fi
+
+dpkg -i $CACHEDIR/$NGINXFILE
 
 BINDIR=$(dirname "$0")
 
