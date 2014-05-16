@@ -2,15 +2,19 @@
 set -e
 
 CACHEDIR=$2
-NGINXFILE=nginx_1.2.1-2.2ubuntu0.2_all.deb
+NGINX_COMMON=nginx-common_1.2.1-2.2ubuntu0.2_all.deb
+NGINX_FULL=nginx-full_1.2.1-2.2ubuntu0.2_amd64.deb
+NGINX=nginx_1.2.1-2.2ubuntu0.2_all.deb
 
-if [[ ! -f "$CACHEDIR/$NGINXFILE" ]]; then
+if [[ ! -f "$CACHEDIR/$NGINX" ]]; then
   apt-get update
-  apt-get download nginx
-  mv $NGINXFILE $CACHEDIR
+  apt-get download nginx nginx-common nginx-full
+  mv nginx* $CACHEDIR/
 fi
 
-dpkg -i $CACHEDIR/$NGINXFILE
+dpkg -i $CACHEDIR/$NGINX_COMMON
+dpkg -i $CACHEDIR/$NGINX_FULL
+dpkg -i $CACHEDIR/$NGINX
 
 BINDIR=$(dirname "$0")
 
