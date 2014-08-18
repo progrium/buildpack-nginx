@@ -1,8 +1,12 @@
 #!/usr/bin/env bash
 set -e
 
-apt-get update
-apt-get -y install nginx
+if [[ -e $1/${CUSTOM_NGINX_INSTALL:-custom-nginx-install} ]]; then
+    $1/${CUSTOM_NGINX_INSTALL:-custom-nginx-install} "$@"
+else
+    apt-get update
+    apt-get -y install nginx
+fi
 
 BINDIR=$(dirname "$0")
 
