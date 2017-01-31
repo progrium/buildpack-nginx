@@ -1,19 +1,151 @@
 #!/usr/bin/env bash
+# bin/compile <build-dir> <cache-dir>
+
 set -e
+set -o pipefail
 
-apt-get update
-apt-get -y install nginx
+# Nginx 1.8.1
+NGINX_VERSION="1.8.1"
+NGINX_TARBALL="nginx-${NGINX_VERSION}.tar.gz"
+PCRE_VERSION="8.40"
+PCRE_TARBALL="pcre-${PCRE_VERSION}.tar.gz"
+ZLIB_VERSION="1.2.11"
+ZLIB_TARBALL="zlib-${ZLIB_VERSION}.tar.gz"
 
-BINDIR=$(dirname "$0")
+# parse and derive params
+BUILD_DIR=$1
+CACHE_DIR=$2
+CUR_DIR=`cd $(dirname $0); cd ..; pwd`
 
-if [[ ! -f $1/nginx.conf.erb ]]; then
-    cp $BINDIR/../conf/nginx.conf.erb $1/nginx.conf.erb
+mkdir -p $BUILD_DIR $CACHE_DIR
+
+if [[ ! -e "$BUILD_DIR/www" ]]; then
+  echo "-----> copy static files to www"
+  rm -rf $CACHE_DIR/www
+  mkdir -p $CACHE_DIR/www
+  mv $BUILD_DIR/* $CACHE_DIR/www
+  mkdir -p $BUILD_DIR/www
+  mv $CACHE_DIR/www/* $BUILD_DIR/www
+  # Check for a copy the nginx conf file override to the build dir
+  [[ -f "$BUILD_DIR/www/nginx.conf.erb" ]] && mv $BUILD_DIR/www/nginx.conf.erb $BUILD_DIR
+  [[ -f "$BUILD_DIR/www/mime.types" ]] && mv $BUILD_DIR/www/mime.types $BUILD_DIR
+  [[ -f "$BUILD_DIR/www/CHECKS" ]] && mv $BUILD_DIR/www/CHECKS $BUILD_DIR
+  rm -rf $CACHE_DIR/www
 fi
 
-if [[ ! -f $1/mime.types ]]; then
-	cp $BINDIR/../conf/mime.types $1/mime.types
+cd $CACHE_DIR
+
+if [[ ! -d "${NGINX_TARBALL%.tar.gz}" ]]; then
+  echo "-----> download and unzip nginx"
+  curl "http://nginx.org/download/${NGINX_TARBALL}" -o "${NGINX_TARBALL}"
+  tar xzf "${NGINX_TARBALL}" && rm -f "${NGINX_TARBALL}"
 fi
 
-if [[ -e $1/${CUSTOM_BUILD:-custom-build} ]]; then
-    $1/${CUSTOM_BUILD:-custom-build} "$@"
+if [[ ! -d "${PCRE_TARBALL%.tar.gz}" ]]; then
+  echo "-----> download and unzip pcre"
+  curl "http://ftp.csx.cam.ac.uk/pub/software/programming/pcre/${PCRE_TARBALL}" -o "${PCRE_TARBALL}"
+  tar xzf "${PCRE_TARBALL}" && rm -f "${PCRE_TARBALL}"
 fi
+
+if [[ ! -d "${ZLIB_TARBALL%.tar.gz}" ]]; then
+  echo "-----> download and unzip zlib"
+  curl "http://zlib.net/${ZLIB_TARBALL}" -o "${ZLIB_TARBALL}"
+  tar xzf "${ZLIB_TARBALL}" && rm -rf "${ZLIB_TARBALL}"
+fi
+
+cd "nginx-${NGINX_VERSION}"
+if [[ ! -f "${CACHE_DIR}/bin/nginx" ]]; then
+  echo "-----> compile static nginx"
+  mkdir $BUILD_DIR/nginx
+  ./configure \
+    --with-cpu-opt=generic \
+    --prefix=$BUILD_DIR/nginx \
+    --with-pcre=../pcre-${PCRE_VERSION} \
+    --sbin-path=. \
+    --pid-path=./nginx.pid \
+    --conf-path=./nginx.conf \
+    --with-ld-opt="-static" \
+    --with-http_spdy_module \
+    --with-http_stub_status_module \
+    --with-http_gzip_static_module \
+    --with-file-aio \
+    --with-zlib=../zlib-${ZLIB_VERSION} \
+    --with-pcre \
+    --with-cc-opt="-O2 -static -static-libgcc" \
+    --without-http_charset_module \
+    --without-http_ssi_module \
+    --without-http_userid_module \
+    --without-http_access_module \
+    --without-http_auth_basic_module \
+    --without-http_autoindex_module \
+    --without-http_geo_module \
+    --without-http_map_module \
+    --without-http_split_clients_module \
+    --without-http_referer_module \
+    --without-http_proxy_module \
+    --without-http_fastcgi_module \
+    --without-http_uwsgi_module \
+    --without-http_scgi_module \
+    --without-http_memcached_module \
+    --without-http_empty_gif_module \
+    --without-http_browser_module \
+    --without-http_upstream_ip_hash_module \
+    --without-http_upstream_least_conn_module \
+    --without-http_upstream_keepalive_module \
+    --without-mail_pop3_module \
+    --without-mail_imap_module \
+    --without-mail_smtp_module
+
+  sed -i "/CFLAGS/s/ \-O //g" objs/Makefile
+
+  make && make install
+
+  rm -rf $CACHE_DIR/bin && mkdir -p $CACHE_DIR/bin/
+  cp -r $BUILD_DIR/nginx/* $CACHE_DIR/bin/
+
+else
+  echo "-----> reuse nginx from cache"
+  mkdir -p $BUILD_DIR/nginx
+  cp -r $CACHE_DIR/bin/* $BUILD_DIR/nginx/
+fi
+
+# Update the PATH
+mkdir -p $BUILD_DIR/.profile.d
+cat > $BUILD_DIR/.profile.d/nginx.sh <<"EOF"
+export PATH="$PATH:$HOME/nginx"
+EOF
+
+cd $CUR_DIR
+
+
+# Test for user override on nginx config...
+if [ -f $BUILD_DIR/nginx.conf.erb ] ; then
+  echo "-----> using user provided nginx.conf.erb"
+  cp $BUILD_DIR/nginx.conf.erb $BUILD_DIR/nginx/nginx.conf.erb
+  #rm $BUILD_DIR/nginx.conf.erb
+
+# ...else, force default file
+else
+  echo "-----> using default nginx.conf.erb"
+  cp conf/nginx.conf.erb $BUILD_DIR/nginx/nginx.conf.erb
+fi
+
+# build mime.types unless overridden by user
+if [ -f $BUILD_DIR/mime.types ] ; then
+  echo "-----> using user provided mime.types"
+  cp $BUILD_DIR/mime.types $BUILD_DIR/nginx/mime.types
+
+else
+  echo "-----> using default mime.types"
+  cp conf/mime.types $BUILD_DIR/nginx/mime.types
+fi
+
+
+# build a startup script
+cat <<EOF >"$BUILD_DIR/start_nginx"
+#!/usr/bin/env bash
+rm -f /app/nginx/nginx.conf
+erb /app/nginx/nginx.conf.erb > /app/nginx/nginx.conf
+exec /app/nginx/nginx -p /app/nginx -c /app/nginx/nginx.conf
+EOF
+chmod +x "$BUILD_DIR/start_nginx"

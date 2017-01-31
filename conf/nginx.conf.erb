@@ -4,16 +4,20 @@ pid nginx.pid;
 daemon off;
 
 events {
-	worker_connections 768;
+  worker_connections 768;
 }
 
 http {
-	types_hash_max_size 2048;
-	include mime.types;
-	server {
-		listen <%= ENV['PORT'] %>;
-		server_name  _;
-		root <%= ENV.fetch('root', '/app/www') %>;
-		index index.html;
-	}
+  types_hash_max_size 2048;
+  include mime.types;
+  server {
+    listen <%= ENV["PORT"] %>;
+    server_name  _;
+    <% if ENV["ROOT"] %>
+      root /app/www/<%= ENV["ROOT"] %>;
+    <% else %>
+      root /app/www;
+    <% end %>
+    index index.html;
+  }
 }
